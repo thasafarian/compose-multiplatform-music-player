@@ -1,179 +1,225 @@
 # Backend Structure Document
 
-This document outlines the backend architecture, hosting, and infrastructure for the **codeguide-starter** project. It uses plain language so anyone can understand how the backend is set up and how it supports the application.
-
 ## 1. Backend Architecture
 
-- **Framework and Design Pattern**
-  - We use **Next.js API Routes** to handle all server-side logic. These routes live alongside the frontend code in the same repository, making development and deployment simpler.
-  - The backend follows a **layered pattern**:
-    1. **API Layer**: Receives requests (login, registration, data fetch).  
-    2. **Service Layer**: Contains the core business logic (user validation, password hashing).  
-    3. **Data Access Layer**: Talks to the database via a simple ORM (e.g., Prisma or TypeORM).
+Our backend is built on Next.js with API Routes. It follows a modular, component-driven pattern that cleanly separates concerns and makes it easy for developers of any level to understand and extend.
 
-- **Scalability**
-  - Stateless API routes can scale horizontally—new instances can spin up on demand.  
-  - We can add caching or a message queue (e.g., Redis or RabbitMQ) without changing the core code.
+- We use the **App Router** paradigm in Next.js. Layouts and pages are organized under the `app/` directory.
+- **API Routes** live under `app/api/` and handle all server-side logic (data fetching, authentication, business rules).
+- **TypeScript** ensures type safety end-to-end, from API inputs to database models.
+- **Drizzle ORM** provides a type-safe layer over PostgreSQL, preventing common mistakes when querying or mutating data.
 
-- **Maintainability**
-  - Code for each feature is grouped by route (authentication, dashboard).  
-  - A service layer separates complex logic from request handling.
+How it supports key qualities:
+- **Scalability**: Next.js automatically splits code into smaller chunks, and our modular API structure lets us add or remove features without impacting unrelated parts. Vercel’s serverless functions scale on demand.
+- **Maintainability**: Clear directory structure (`app/`, `components/`, `db/`, `lib/`) and consistent naming conventions reduce cognitive load for new team members.
+- **Performance**: Server-side rendering (SSR) and static-site generation (SSG) handle different pages appropriately. Built-in caching and edge functions in Vercel speed up API responses.
 
-- **Performance**
-  - Lightweight Node.js handlers keep response times low.  
-  - Future use of database connection pooling and Redis for caching repeated queries.
+---
 
 ## 2. Database Management
 
-- **Database Choice**
-  - We recommend **PostgreSQL** for structured data and reliable transactions.  
-  - In-memory caching can be added later with **Redis** for session tokens or frequently read data.
+We rely on a managed **PostgreSQL** database paired with **Drizzle ORM** for object-relational mapping.
 
-- **Data Storage and Access**
-  - Use an ORM like **Prisma** or **TypeORM** to map JavaScript/TypeScript objects to database tables.
-  - Connection pooling ensures efficient use of database connections under load.
-  - Migrations track schema changes over time, keeping development, staging, and production in sync.
+- Type: Relational (SQL) database.
+- System: PostgreSQL (works with any managed provider: AWS RDS, Supabase, DigitalOcean, etc.).
+- ORM: Drizzle ORM for type-safe queries.
 
-- **Data Practices**
-  - Passwords are never stored in plain text—they are salted and hashed with **bcrypt** before saving.
-  - All outgoing data is typed and validated to prevent malformed records.
+Data practices:
+- **Migrations**: Drizzle’s migration tool keeps schema changes in version control.
+- **Seeding**: Custom scripts populate sample data (artists, albums, tracks) for local development.
+- **Connection pooling**: The Drizzle/PostgreSQL client uses built-in pooling to manage concurrent connections.
+- **Naming conventions**: Tables are plural (`users`, `playlists`), columns are snake_case.
+
+---
 
 ## 3. Database Schema
 
-### Human-Readable Format
+**Human-Readable Overview**
+- **users**: Registered users with credentials and profile settings.
+- **sessions**: Tracks user sessions (managed by `better-auth`).
+- **artists**: Music artists or bands.
+- **albums**: Collections of tracks by one artist.
+- **tracks**: Individual songs, each tied to an album and one or more artists.
+- **playlists**: User-created collections of tracks.
+- **playlist_tracks**: Join table connecting playlists and tracks.
 
-- **Users**
-  - **id**: Unique identifier  
-  - **email**: User’s email address (unique)  
-  - **password_hash**: Securely hashed password  
-  - **created_at**: Account creation timestamp
-
-- **Sessions**
-  - **id**: Unique session record  
-  - **user_id**: Links to a user  
-  - **token**: Random string for authentication  
-  - **expires_at**: When the token stops working  
-  - **created_at**: When the session was created
-
-- **DashboardItems** *(optional for dynamic data)*
-  - **id**: Unique record  
-  - **title**: Item title  
-  - **content**: Item details  
-  - **created_at**: When the item was added
-
-### SQL Schema (PostgreSQL)
+**SQL Schema (PostgreSQL)**
 ```sql
--- Users table
+-- Users table (handled by better-auth)
 CREATE TABLE users (
-  id SERIAL PRIMARY KEY,
-  email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  id UUID PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  name TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Sessions table
+-- Sessions table (better-auth)
 CREATE TABLE sessions (
-  id SERIAL PRIMARY KEY,
-  user_id INT REFERENCES users(id) ON DELETE CASCADE,
-  token VARCHAR(255) UNIQUE NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  id UUID PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT UNIQUE NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
 );
 
--- Dashboard items table
-CREATE TABLE dashboard_items (
-  id SERIAL PRIMARY KEY,
+-- Artists
+CREATE TABLE artists (
+  id UUID PRIMARY KEY,
+  name TEXT NOT NULL,
+  bio TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Albums
+CREATE TABLE albums (
+  id UUID PRIMARY KEY,
+  artist_id UUID REFERENCES artists(id) ON DELETE SET NULL,
   title TEXT NOT NULL,
-  content TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
+  cover_url TEXT,
+  release_date DATE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Tracks
+CREATE TABLE tracks (
+  id UUID PRIMARY KEY,
+  album_id UUID REFERENCES albums(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  duration_seconds INTEGER,
+  audio_url TEXT NOT NULL,
+  track_number INTEGER,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Playlists
+CREATE TABLE playlists (
+  id UUID PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_public BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Playlist ↔ Track join
+CREATE TABLE playlist_tracks (
+  playlist_id UUID REFERENCES playlists(id) ON DELETE CASCADE,
+  track_id UUID REFERENCES tracks(id) ON DELETE CASCADE,
+  added_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (playlist_id, track_id)
 );
 ```  
 
+---
+
 ## 4. API Design and Endpoints
 
-- **Approach**: We follow a **RESTful** style, grouping related endpoints under `/api` directories.
+We follow a RESTful approach using Next.js API Routes. Each resource (users, playlists, tracks, etc.) has its own route folder.
 
-- **Key Endpoints**
-  - `POST /api/auth/register`  
-    • Accepts `{ email, password }`  
-    • Creates a new user and issues a session token  
-  - `POST /api/auth/login`  
-    • Accepts `{ email, password }`  
-    • Verifies credentials and returns a session token  
-  - `POST /api/auth/logout`  
-    • Invalidates the session token on the server  
-  - `GET /api/dashboard/data`  
-    • Requires a valid session  
-    • Returns user-specific data or dashboard items  
+Key endpoints:
 
-- **Communication**
-  - Frontend sends JSON requests; backend replies with JSON and appropriate HTTP status codes.  
-  - Protected routes check for a valid session token (in cookies or Authorization header).
+- `/api/auth/[...all]`  
+  Purpose: Sign up, sign in, sign out, session management (provided by `better-auth`).
+
+- `/api/users`  
+  • GET `/api/users/me`: Fetch current user profile  
+  • PUT `/api/users/me`: Update user settings  
+
+- `/api/playlists`  
+  • GET `/api/playlists`: List user’s playlists  
+  • POST `/api/playlists`: Create a new playlist  
+  • GET `/api/playlists/[id]`: Fetch playlist details & tracks  
+  • PUT `/api/playlists/[id]`: Rename or reconfigure visibility  
+  • DELETE `/api/playlists/[id]`: Remove playlist
+
+- `/api/tracks`  
+  • GET `/api/tracks/[id]`: Fetch track metadata and audio URL
+
+- `/api/albums`  
+  • GET `/api/albums/[id]`: Fetch album details and track list
+
+- `/api/artists`  
+  • GET `/api/artists/[id]`: Fetch artist bio and albums
+
+- `/api/search`  
+  • GET `/api/search?q=...`: Full-text search across artists, albums, tracks
+
+All routes:
+- Validate inputs in `route.ts`.  
+- Use Drizzle ORM for database operations.  
+- Return JSON responses with consistent shapes (e.g., `{ data: ..., error: ... }`).
+
+---
 
 ## 5. Hosting Solutions
 
-- **Cloud Provider**:  
-  - **Vercel** (recommended) offers seamless Next.js deployments, auto-scaling, and built-in CDN.  
-  - Alternatively, **Netlify** or any Node.js-capable host will work.
+**Platform**: Vercel (recommended) for the Next.js application; managed PostgreSQL for the database.
 
-- **Benefits**
-  - **Reliability**: Global servers and failover across regions.  
-  - **Scalability**: Auto-scale serverless functions based on traffic.  
-  - **Cost-Effectiveness**: Pay-per-use model means low cost for small projects.
+- **Vercel** automatically deploys on each push, provides serverless functions for APIs, and global CDN for static assets.
+- **Managed PostgreSQL** (Supabase, AWS RDS, DigitalOcean) ensures automated backups and failover.
+
+Benefits:
+- **Reliability**: Built-in health checks and rollback on Vercel.  
+- **Scalability**: Vercel scales serverless functions horizontally; the database can scale vertically and horizontally (read replicas).  
+- **Cost-effectiveness**: Pay-as-you-go on Vercel; open-source ORM and local Docker setup keep development costs low.
+
+---
 
 ## 6. Infrastructure Components
 
-- **Load Balancer**
-  - Provided by the hosting platform—distributes API requests across function instances.
+- **Load Balancer / Edge Network**: Handled by Vercel’s edge network, routing requests to the nearest serverless function.
+- **CDN**: Vercel CDN caches static assets (images, CSS, JavaScript) at the edge.
+- **Caching**: 
+  • **Server-side**: Next.js ISR, SWR for stale-while-revalidate caching.  
+  • **Database**: Optional Redis layer for heavy read patterns (e.g., top charts, popular playlists).
+- **Docker**: Used locally to spin up a consistent PostgreSQL environment.
 
-- **CDN (Content Delivery Network)**
-  - Vercel’s global edge network caches static assets (CSS, JS, images) for faster page loads.
+How they interact:
+- Client requests hit the Vercel edge.  
+- Static files served from CDN.  
+- API calls routed to serverless functions with minimal cold start latency.  
+- Serverless functions query the PostgreSQL database (or Redis cache) and return JSON.
 
-- **Caching**
-  - **Redis** (optional) for session storage or caching dashboard queries to reduce database load.
-
-- **Object Storage**
-  - For file uploads or backups, integrate with AWS S3 or similar services.
-
-- **Message Queue**
-  - In future, use **RabbitMQ** or **Kafka** for background tasks (e.g., email notifications).
+---
 
 ## 7. Security Measures
 
-- **Authentication & Authorization**
-  - Passwords hashed with **bcrypt** and salted.  
-  - Session tokens stored in secure, HttpOnly cookies or Authorization headers.  
-  - Protected endpoints verify tokens before proceeding.
+- **Authentication**: `better-auth` using secure, HTTP-only cookies.  
+- **Authorization**: Middleware in Next.js layouts checks user sessions and redirects unauthorized access.  
+- **Data Encryption**: TLS for all network traffic.  
+- **Input Validation**: All API payloads validated with Zod or a similar schema library before database operations.  
+- **Secrets Management**: Environment variables in Vercel for database URL, JWT secrets, OAuth keys.  
+- **Rate Limiting**: Optional edge function or third-party service (e.g., Cloudflare) to throttle abusive requests.
+- **Database Security**: Least-privileged DB user; separate read-only role for analytics if needed.
 
-- **Data Encryption**
-  - **HTTPS/TLS** encrypts data in transit.  
-  - Database connections use SSL to encrypt data between the app and the database.
-
-- **Input Validation**
-  - Every incoming request is validated (e.g., valid email format, password length) to prevent SQL injection or other attacks.
-
-- **Web Security Best Practices**
-  - Enable **CORS** policies to limit allowed origins.  
-  - Use **CSRF tokens** or same-site cookies to prevent cross-site requests.  
-  - Set secure headers with **Helmet** or a similar middleware.
+---
 
 ## 8. Monitoring and Maintenance
 
-- **Performance Monitoring**
-  - Integrate **Sentry** or **LogRocket** for real-time crash reporting and performance tracing.  
-  - Use Vercel’s built-in analytics to track request latencies and error rates.
+- **Monitoring**:  
+  • Vercel’s built-in analytics for request rates, latencies, and error rates.  
+  • Optional integration with Sentry for error tracking in serverless functions.  
+  • Database metrics via your provider’s dashboard (CPU, connections, slow queries).
+- **Logging**: API functions log to stdout; Vercel aggregates logs. For deeper insights, integrate with Logflare or Datadog.
+- **Maintenance**:  
+  • Automated database migrations with Drizzle CLI on deploy.  
+  • Scheduled database backups and health checks by the managed provider.  
+  • Regular dependency updates using a bot (Dependabot) and manual security reviews.
 
-- **Logging**
-  - Structured logs (JSON) for all API requests and errors, shipped to a log management service like **Datadog** or **Logflare**.
-
-- **Health Checks**
-  - Define a `/health` endpoint that returns a 200 status if the service is up and the database is reachable.
-
-- **Maintenance Strategies**
-  - Automated migrations run on deploy to keep the database schema up to date.  
-  - Scheduled dependency audits and security scans (e.g., `npm audit`).
-  - Regular backups of the database (daily or weekly depending on usage).
+---
 
 ## 9. Conclusion and Overall Backend Summary
 
-The backend for **codeguide-starter** is built on Next.js API Routes and Node.js, paired with PostgreSQL for data and optional Redis for caching. It follows a clear layered architecture that keeps code easy to maintain and extend. With RESTful endpoints for authentication and data, secure practices like password hashing and HTTPS, and hosting on Vercel for scalability and global performance, this setup meets the project’s goals for a fast, secure, and developer-friendly foundation. Future enhancements—such as background job queues, advanced monitoring, or richer data models—can be added without disrupting the core structure.
+This backend is a modern, scalable, and secure foundation for a web-based music player or a headless API for native clients. Key points:
+
+- **Next.js + TypeScript + Drizzle ORM** deliver type safety and developer productivity.  
+- **PostgreSQL** stores relational music data with clear schemas for users, playlists, tracks, albums, and artists.  
+- **Next.js API Routes** expose a well-structured RESTful API for all core features: authentication, library management, search, and playback metadata.  
+- **Vercel + Docker** ensure effortless local development and production deployment with global performance via built-in CDN and serverless scaling.  
+- **Security**, **monitoring**, and **maintenance** practices are in place to protect user data and keep the service reliable.
+
+Unique advantages:
+- Ready to serve both a web UI and native Kotlin/Compose clients in a headless architecture.  
+- Modular design allows you to plug in features—like real-time listening charts, collaborative playlists, or third-party catalog integrations—without rewiring the core.
+
+This setup gets you safely past boilerplate and into building the features that make your music service stand out.
